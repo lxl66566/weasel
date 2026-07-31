@@ -133,6 +133,12 @@ void WeaselPanel::_CreateLayout() {
 
 // 更新界面
 void WeaselPanel::Refresh() {
+  // 跨线程调用时（典型为 IPC 工作线程经 m_ui->Update() 进入），把工作 marshal
+  // 回 UI 线程执行。Direct2D 的 render target 不是线程安全的，必须串行访问。
+  if (!_IsUiThread()) {
+    PostMessage(WM_WEASEL_REFRESH);
+    return;
+  }
   bool should_show_icon =
       (m_status.ascii_mode || !m_status.composing || !m_ctx.aux.empty());
   m_candidateCount = min(m_ctx.cinfo.candies.size(), MAX_CANDIDATES_COUNT);
@@ -1120,6 +1126,11 @@ void WeaselPanel::DoPaint(CDCHandle dc) {
 // 由于某些软件并不依赖 WM_PAINT 消息来重绘，在消息循环中直接忽略掉了 WM_PAINT
 // 消息， 导致 DoPaint() 永远不会被调用，这里手动调用 DoPaint() 强制重绘
 void WeaselPanel::RedrawWindow() {
+  // 跨线程调用时 marshal 回 UI 线程，避免与正在进行的 BeginDraw/EndDraw 并发。
+  if (!_IsUiThread()) {
+    PostMessage(WM_WEASEL_REDRAW);
+    return;
+  }
   HDC hdc = GetDC();
   DoPaint(hdc);
   ReleaseDC(hdc);
@@ -1169,9 +1180,57 @@ LRESULT WeaselPanel::OnDpiChanged(UINT uMsg,
   return LRESULT();
 }
 
+bool WeaselPanel::_IsUiThread() const {
+  // 窗口尚未创建（构造期）或已销毁时，按“同线程”处理，让调用方直接执行，
+  // 避免在没有 HWND 的情况下 PostMessage。
+  if (!IsWindow())
+    return true;
+  DWORD dwPid = 0;
+  DWORD dwTid = GetWindowThreadProcessId(m_hWnd, &dwPid);
+  return dwTid == GetCurrentThreadId();
+}
+
+LRESULT WeaselPanel::OnRefreshPanel(UINT uMsg,
+                                    WPARAM wParam,
+                                    LPARAM lParam,
+                                    BOOL& bHandled) {
+  bHandled = TRUE;
+  Refresh();  // 现已在 UI 线程，直接执行
+  return 0;
+}
+
+LRESULT WeaselPanel::OnRedrawWindow(UINT uMsg,
+                                    WPARAM wParam,
+                                    LPARAM lParam,
+                                    BOOL& bHandled) {
+  bHandled = TRUE;
+  RedrawWindow();  // 现已在 UI 线程，直接执行
+  return 0;
+}
+
+LRESULT WeaselPanel::OnMoveTo(UINT uMsg,
+                              WPARAM wParam,
+                              LPARAM lParam,
+                              BOOL& bHandled) {
+  bHandled = TRUE;
+  // RECT 由跨线程的 MoveTo() 在堆上分配，这里消费完即释放
+  std::unique_ptr<RECT> pRc(reinterpret_cast<RECT*>(wParam));
+  if (pRc)
+    MoveTo(*pRc);  // 现已在 UI 线程，MoveTo 内部不会再触发 marshal
+  return 0;
+}
+
 void WeaselPanel::MoveTo(RECT const& rc) {
   if (!m_layout)
     return;  // avoid handling nullptr in _RepositionWindow
+  // 跨线程调用时（IPC 工作线程经 m_ui->UpdateInputPosition() 进入）marshal 回 UI 线程，
+  // 内部会触发 Refresh()/RedrawWindow()，同样需要避免与正在进行的绘制并发。
+  // RECT 用堆拷贝传递，由 OnMoveTo 负责释放。
+  if (!_IsUiThread()) {
+    RECT* pRc = new RECT(rc);
+    PostMessage(WM_WEASEL_MOVETO, reinterpret_cast<WPARAM>(pRc));
+    return;
+  }
   m_redraw_by_monitor_change = false;
   // The conditions for resetting the sticky state:
   // 1. When the input session ends (ctx.empty() is true)

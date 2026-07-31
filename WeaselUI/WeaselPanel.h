@@ -21,6 +21,14 @@ enum class BackType {
   BACKGROUND = 2  // background
 };
 
+// 自定义消息：把跨线程的 UI 调用 marshal 回窗口所属线程（UI 线程）执行。
+// Direct2D 的 ID2D1RenderTarget 不是线程安全的，必须保证所有绘制 / 资源重建
+// 都在同一个线程上串行发生
+// 取 WM_APP + 0x1000 起始，避开 WeaselIPC.h 中已使用的 WM_APP+1.. 段。
+#define WM_WEASEL_REFRESH (WM_APP + 0x1000)
+#define WM_WEASEL_REDRAW (WM_APP + 0x1001)
+#define WM_WEASEL_MOVETO (WM_APP + 0x1002)
+
 class WeaselPanel
     : public CWindowImpl<WeaselPanel, CWindow, CWeaselPanelTraits>,
       CDoubleBufferImpl<WeaselPanel> {
@@ -35,12 +43,24 @@ class WeaselPanel
   MESSAGE_HANDLER(WM_MOUSEWHEEL, OnMouseWheel)
   MESSAGE_HANDLER(WM_MOUSEMOVE, OnMouseMove)
   MESSAGE_HANDLER(WM_MOUSELEAVE, OnMouseLeave)
+  MESSAGE_HANDLER(WM_WEASEL_REFRESH, OnRefreshPanel)
+  MESSAGE_HANDLER(WM_WEASEL_REDRAW, OnRedrawWindow)
+  MESSAGE_HANDLER(WM_WEASEL_MOVETO, OnMoveTo)
   CHAIN_MSG_MAP(CDoubleBufferImpl<WeaselPanel>)
   END_MSG_MAP()
 
   LRESULT OnCreate(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
   LRESULT OnDestroy(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
   LRESULT OnDpiChanged(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
+  LRESULT OnRefreshPanel(UINT uMsg,
+                         WPARAM wParam,
+                         LPARAM lParam,
+                         BOOL& bHandled);
+  LRESULT OnRedrawWindow(UINT uMsg,
+                         WPARAM wParam,
+                         LPARAM lParam,
+                         BOOL& bHandled);
+  LRESULT OnMoveTo(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
   LRESULT OnMouseActivate(UINT uMsg,
                           WPARAM wParam,
                           LPARAM lParam,
@@ -78,6 +98,10 @@ class WeaselPanel
   int DPI_SCALE(T t) {
     return (int)(t * dpiScaleLayout);
   }
+  // 判断当前线程是否为窗口所属线程（UI 线程）。所有触碰 HWND / D2D 资源的
+  // 绘制类操作都必须在 UI 线程上执行，否则 ID2D1RenderTarget 的并发访问会
+  // 触发 d2d1.dll 内部崩溃（0xC0000005）。
+  bool _IsUiThread() const;
   void _InitFontRes(bool forced = false);
   void _CaptureRect(CRect& rect);
   bool m_mouse_entry = false;
