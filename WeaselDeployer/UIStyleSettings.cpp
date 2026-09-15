@@ -10,7 +10,8 @@ UIStyleSettings::UIStyleSettings() {
 }
 
 UIStyleSettings::~UIStyleSettings() {
-  api_->custom_settings_destroy(settings_);
+  if (api_ && settings_)
+    api_->custom_settings_destroy(settings_);
 }
 
 void _Setup() {
