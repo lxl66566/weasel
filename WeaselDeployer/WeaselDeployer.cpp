@@ -15,6 +15,7 @@ int APIENTRY _tWinMain(HINSTANCE hInstance,
                        LPTSTR lpCmdLine,
                        int nCmdShow) {
   UNREFERENCED_PARAMETER(hPrevInstance);
+  LoadWeaselLogLevelFromRegistry();
 
   LANGID langId = get_language_id();
   SetThreadUILanguage(langId);
