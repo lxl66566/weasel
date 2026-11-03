@@ -168,15 +168,30 @@ rule("add_rcfiles")
 rule("use_weaselconstants")
   on_load(function(target)
     function check_include_weasel_constants_in_dir(dir)
+      -- memoize the scan result per directory for the lifetime of this xmake
+      -- process: this rule's on_load runs for every target, and each scan
+      -- otherwise re-reads every .h/.cpp file under the target directory
+      local cache = _weasel_constants_check_cache
+      if cache == nil then
+        cache = {}
+        _weasel_constants_check_cache = cache
+      end
+      local cached = cache[dir]
+      if cached ~= nil then
+        return cached
+      end
+      local found = false
       local files = os.files(path.join(dir, "**.h"))
       table.join2(files, os.files(path.join(dir, "**.cpp")))
       for _, file in ipairs(files) do
         local content = io.readfile(file)
         if content:find('#include%s+"WeaselConstants%.h"') or content:find('#include%s+<WeaselConstants%.h>') then
-          return true
+          found = true
+          break
         end
       end
-      return false
+      cache[dir] = found
+      return found
     end
     if check_include_weasel_constants_in_dir(target:scriptdir()) then
       target:add("rcflags", {
