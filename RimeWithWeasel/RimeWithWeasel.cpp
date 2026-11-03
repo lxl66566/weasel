@@ -43,6 +43,7 @@ RimeWithWeaselHandler::RimeWithWeaselHandler(UI* ui)
       m_global_ascii_mode(false),
       m_show_notifications_time(1200),
       _UpdateUICallback(NULL) {
+  LOG(INFO) << "constructing RimeWithWeaselHandler";
   m_ui->InServer() = true;
   rime_api = rime_get_api();
   assert(rime_api);
@@ -55,7 +56,9 @@ RimeWithWeaselHandler::RimeWithWeaselHandler(UI* ui)
     }
   }
   m_pid = (m_pid << (31 - msbit));
+  LOG(INFO) << "setting up Rime traits";
   _Setup();
+  LOG(INFO) << "RimeWithWeaselHandler constructed";
 }
 
 RimeWithWeaselHandler::~RimeWithWeaselHandler() {
@@ -106,9 +109,12 @@ void RimeWithWeaselHandler::Initialize() {
   }
 
   LOG(INFO) << "Initializing la rime.";
+  LOG(INFO) << "calling rime_api->initialize";
   rime_api->initialize(NULL);
+  LOG(INFO) << "starting Rime maintenance";
   if (rime_api->start_maintenance(/*full_check = */ False)) {
     m_disabled = true;
+    LOG(INFO) << "waiting for Rime maintenance";
     rime_api->join_maintenance_thread();
   }
 

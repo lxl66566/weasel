@@ -42,6 +42,8 @@ bool UI::Create(HWND parent) {
         parent, 0, 0, WS_POPUP,
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
         0U, 0);
+    if (!pimpl_->panel.IsWindow())
+      return false;
     return true;
   }
 
@@ -53,6 +55,8 @@ bool UI::Create(HWND parent) {
       parent, 0, 0, WS_POPUP,
       WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
       0U, 0);
+  if (!pimpl_->panel.IsWindow())
+    return false;
   return true;
 }
 
