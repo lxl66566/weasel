@@ -249,7 +249,7 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
   {
     _roundInfo[0].IsBottomLeftNeedToRound = false;
     _roundInfo[candidates_count - 1].IsTopRightNeedToRound = false;
-    for (auto i = 1; i < candidates_count; i++) {
+    for (auto i = 1; i < candidates_count && i < MAX_CANDIDATES_COUNT; i++) {
       _roundInfo[i].Hemispherical = _roundInfo[0].Hemispherical;
       if (row_of_candidate[i] == row_cnt &&
           row_of_candidate[i - 1] == row_cnt - 1)

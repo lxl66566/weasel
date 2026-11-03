@@ -254,7 +254,7 @@ void weasel::StandardLayout::_PrepareRoundInfo(CDCHandle& dc) {
                {true, true, true, true},      // ONLY_CAND
            }},
       };
-      for (auto i = 0; i < candidates_count; i++) {
+      for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
         CRect hilite_rect(_candidateRects[i]);
         hilite_rect.InflateRect(_style.hilite_padding_x,
                                 _style.hilite_padding_y);

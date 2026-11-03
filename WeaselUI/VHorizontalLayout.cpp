@@ -537,7 +537,7 @@ void VHorizontalLayout::DoLayoutWithWrap(CDCHandle dc, PDWR pDWR) {
   _bgRect.DeflateRect(offsetX + 1, offsetY + 1);
   _PrepareRoundInfo(dc);
   if (_style.vertical_text_left_to_right) {
-    for (auto i = 0; i < candidates_count; i++) {
+    for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
       _roundInfo[i].Hemispherical = _roundInfo[0].Hemispherical;
       if (_roundInfo[0].Hemispherical) {
         if (col_of_candidate[i] == col_cnt) {
@@ -570,7 +570,7 @@ void VHorizontalLayout::DoLayoutWithWrap(CDCHandle dc, PDWR pDWR) {
       }
     }
   } else {
-    for (auto i = 0; i < candidates_count; i++) {
+    for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
       _roundInfo[i].Hemispherical = _roundInfo[0].Hemispherical;
       if (_roundInfo[0].Hemispherical) {
         if (col_of_candidate[i] == 0) {

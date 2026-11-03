@@ -36,6 +36,11 @@ inline void LoadIconNecessary(std::wstring& loaded_path,
                               int resource_id) {
   if (icon_path.empty()) {
     if (!loaded_path.empty()) {  // 从自定义图标切回内置资源
+      // WTL 的 CIcon::LoadIconW 成员重载仅 ATLASSERT 判空后直接覆盖旧句柄
+      // （atluser.h，Release 下断言为空操作），须先销毁旧的自定义 HICON，
+      // 否则每次切回都泄漏一个图标句柄
+      if (!icon.IsNull())
+        icon.DestroyIcon();
       icon.LoadIconW(resource_id, STATUS_ICON_SIZE, STATUS_ICON_SIZE,
                      LR_DEFAULTCOLOR);
       loaded_path.clear();
@@ -117,11 +122,17 @@ WeaselPanel::WeaselPanel(weasel::UI& ui)
 
 WeaselPanel::~WeaselPanel() {
   // B12a：缓存的模糊位图是 GDI+ 对象，必须在 GdiplusShutdown 之前释放
-  m_shadowBitmapCache.clear();
+  _ClearShadowBitmapCache();
   Gdiplus::GdiplusShutdown(_m_gdiplusToken);
   delete m_layout;
   m_layout = NULL;
   // pDWR.reset();
+}
+
+// 见 WeaselPanel.h：样式落地等旧阴影位图作废时，整体回收并复位像素计数
+void WeaselPanel::_ClearShadowBitmapCache() {
+  m_shadowBitmapCache.clear();
+  m_shadowBitmapCachePixels = 0;
 }
 
 void WeaselPanel::_ResizeWindow() {
@@ -267,6 +278,13 @@ void WeaselPanel::_InitFontRes(bool forced) {
   m_ostyle = m_style;
   dpi = dpiX;
   dpiScaleLayout = (float)dpi / 96.0f;
+}
+
+// D12：缓存条目的像素量（32bpp 位图，字节数为像素量×4），由键中的
+// 位图尺寸字段直接得出，无需在条目里额外存储
+static inline size_t ShadowBitmapPixels(const ShadowBitmapKey& key) {
+  return (size_t)max(0, key.width + 2 * key.blur_margin_x) *
+         (size_t)max(0, key.height + 2 * key.blur_margin_y);
 }
 
 static HBITMAP CopyDCToBitmap(HDC hDC, LPRECT lpRect) {
@@ -650,6 +668,8 @@ void WeaselPanel::_HighlightText(CDCHandle& dc,
                         DPI_SCALE(m_style.shadow_offset_y),
                         shadowColor};
     Gdiplus::Bitmap* pBitmapDropShadow = NULL;
+    // 超预算不入缓存的帧内持有：仅本帧使用，DrawImage 后随作用域释放
+    std::unique_ptr<Gdiplus::Bitmap> oversize;
     for (auto& e : m_shadowBitmapCache) {
       if (!(key < e.first) && !(e.first < key)) {
         pBitmapDropShadow = e.second.get();
@@ -687,11 +707,23 @@ void WeaselPanel::_HighlightText(CDCHandle& dc,
                      (float)DPI_SCALE(m_style.shadow_radius),
                      (float)DPI_SCALE(m_style.shadow_radius));
 
-      // FIFO 有界：超出容量淘汰最旧条目（条目顺序即插入顺序）
-      if (m_shadowBitmapCache.size() >= SHADOW_BITMAP_CACHE_CAP)
-        m_shadowBitmapCache.erase(m_shadowBitmapCache.begin());
-      m_shadowBitmapCache.emplace_back(
-          key, std::unique_ptr<Gdiplus::Bitmap>(pBitmapDropShadow));
+      // FIFO 有界：条目数与总像素双上限，超出时从最旧条目开始逐出
+      // （条目顺序即插入顺序）。单条即超预算的超大条目不入缓存
+      const size_t pixels = ShadowBitmapPixels(key);
+      const size_t budget = SHADOW_BITMAP_CACHE_PIXEL_WINDOWS *
+                            (size_t)rcw.Width() * (size_t)rcw.Height();
+      if (pixels <= budget) {
+        while (m_shadowBitmapCache.size() >= SHADOW_BITMAP_CACHE_CAP ||
+               m_shadowBitmapCachePixels + pixels > budget) {
+          m_shadowBitmapCachePixels -=
+              ShadowBitmapPixels(m_shadowBitmapCache.front().first);
+          m_shadowBitmapCache.erase(m_shadowBitmapCache.begin());
+        }
+        m_shadowBitmapCachePixels += pixels;
+        m_shadowBitmapCache.emplace_back(
+            key, std::unique_ptr<Gdiplus::Bitmap>(pBitmapDropShadow));
+      } else
+        oversize.reset(pBitmapDropShadow);
     }
 
     g_back.DrawImage(pBitmapDropShadow, rc.left - blurMarginX,
@@ -1116,8 +1148,10 @@ void WeaselPanel::DoPaint(CDCHandle dc) {
         CRect auxrc = m_layout->GetAuxiliaryRect();
         CRect preeditrc = m_layout->GetPreeditRect();
         if (m_istorepos) {
-          CRect* rects = new CRect[m_candidateCount];
-          int* btmys = new int[m_candidateCount];
+          // 定长栈数组：m_candidateCount 已被钳在 MAX_CANDIDATES_COUNT 以内
+          // （Refresh 入口），避免每帧 new[]/delete[]
+          CRect rects[MAX_CANDIDATES_COUNT];
+          int btmys[MAX_CANDIDATES_COUNT];
           for (auto i = 0; i < m_candidateCount && i < MAX_CANDIDATES_COUNT;
                ++i) {
             rects[i] = m_layout->GetCandidateRect(i);
@@ -1149,8 +1183,6 @@ void WeaselPanel::DoPaint(CDCHandle dc) {
                                DPI_SCALE(m_style.candidate_spacing)) -
                               rects[i].bottom;
           }
-          delete[] rects;
-          delete[] btmys;
         }
         // background and candidates back, hilite back drawing start
         if ((!m_ctx.empty() && !m_style.inline_preedit) ||
@@ -1389,7 +1421,7 @@ LRESULT WeaselPanel::OnApplyStyle(UINT uMsg,
     m_style = *pStyle;  // 现已在 UI 线程落地
     // B12a：配色 / 布局参数变化，旧阴影位图全部作废（键虽能防误用，清空可
     // 及时回收内存）
-    m_shadowBitmapCache.clear();
+    _ClearShadowBitmapCache();
   }
   return 0;
 }
@@ -1528,7 +1560,7 @@ void WeaselPanel::ApplyStyle(UIStyle const& style) {
   }
   m_style = style;
   // B12a：样式落地，旧阴影位图作废（见 OnApplyStyle 同款注释）
-  m_shadowBitmapCache.clear();
+  _ClearShadowBitmapCache();
 }
 
 void WeaselPanel::Show() {

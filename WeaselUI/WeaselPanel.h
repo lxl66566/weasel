@@ -180,6 +180,8 @@ class WeaselPanel
   // 绘制 / 布局失败后的恢复（UI 线程调用）：清 m_octx 强制下次重绘、
   // 重建 DWrite 资源、按剩余预算投递 WM_WEASEL_REFRESH 完整重算
   void _RequestPaintRecovery();
+  // 清空阴影位图缓存并复位像素计数（样式落地等旧位图作废时调用）
+  void _ClearShadowBitmapCache();
   void _ApplyUpdate(Context const& ctx, Status const& status);
   // 显隐命令的落地与 marshal（仅 _ApplyVisibility 允许触碰窗口 API）
   void _SetVisibility(PanelVisibility cmd, UINT millisec);
@@ -285,6 +287,13 @@ class WeaselPanel
   // UI 线程（DoPaint 路径）访问，无锁。条目是 GDI+ 对象，必须在
   // GdiplusShutdown 之前释放（见 ~WeaselPanel）。
   static constexpr size_t SHADOW_BITMAP_CACHE_CAP = 16;
+  // D12：缓存总像素二级上限，像素数等价 SHADOW_BITMAP_CACHE_PIXEL_WINDOWS
+  // 张全窗口位图（按绘制时 rcw 计）。仅按条目数封顶时，BACKGROUND 类条目
+  // 覆盖整个内容矩形，4K/DPI 200% 下单条可达数 MB，最坏可累计数十 MB 常驻。
+  // 超预算从最旧逐出；单条即超预算的超大条目不入缓存（仅当帧绘制）
+  static constexpr size_t SHADOW_BITMAP_CACHE_PIXEL_WINDOWS = 8;
+  // 缓存内条目的像素总量（与键推算值一致地增减，见 _HighlightText）
+  size_t m_shadowBitmapCachePixels = 0;
   std::vector<std::pair<ShadowBitmapKey, std::unique_ptr<Gdiplus::Bitmap>>>
       m_shadowBitmapCache;
 };
