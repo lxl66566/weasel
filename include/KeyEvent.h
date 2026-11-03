@@ -16,6 +16,13 @@ struct KeyInfo {
 
 namespace weasel {
 struct KeyEvent {
+  // 32 位打包契约：keycode 与 mask 各占 16 位，打包为单个 UINT32 直接
+  // 经 IPC 传参（KeyEvent(UINT)/operator UINT32）。keycode 只装得下 BMP
+  // 码位（ibus keycode 或 ToUnicodeEx 的单码元翻译）；增补平面码位
+  // （U+10000..U+10FFFF，需 17-21 位）无法无损表达，ConvertKeyEvent 对
+  // 代理对布局键按未知键放行给宿主处理（真实语义见 WeaselTSF/
+  // KeyEvent.cpp）。扩展需同步加宽 TSF 客户端与服务端两端的传输宽度，
+  // 属协议演进项，不可单侧改动
   UINT keycode : 16;
   UINT mask : 16;
   KeyEvent() : keycode(0), mask(0) {}

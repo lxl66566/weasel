@@ -54,19 +54,23 @@ bool ConvertKeyEvent(UINT vkey,
   // repeatCount，直接传会破坏扫描码布局（bit15 的 release 标记维持不设，
   // 与既有行为一致）
   // ToUnicodeEx 返回值契约：1 = 单个 UTF-16 码元；2 = buf[0..1] 为代理对
-  // （布局产出的增补字符；死键无法组合时也会返回两个码元，但那不是
-  // 代理对，按未知键放弃）；-1/其他负值 = 死键，buf 只是死键字符本身，
-  // 不是本键的翻译，同样按未知键处理；0 = 无翻译。
+  // （布局产出的增补字符）或死键无法组合时的两个码元，两者均按未知键
+  // 放弃（代理对的原因见下方分支）；-1/其他负值 = 死键，buf 只是死键
+  // 字符本身，不是本键的翻译，同样按未知键处理；0 = 无翻译。
   int ret = ToUnicodeEx(vkey, kinfo.scanCode, table, buf, buf_len, 0, NULL);
   if (ret == 1) {
     result.keycode = UINT(buf[0]);
     return true;
   }
   if (ret == 2 && IS_HIGH_SURROGATE(buf[0]) && IS_LOW_SURROGATE(buf[1])) {
-    // 代理对合成完整码位，与单字符路径同为“码位即 keycode”语义
-    result.keycode = 0x10000u + ((UINT(buf[0]) - 0xD800u) << 10) +
-                     (UINT(buf[1]) - 0xDC00u);
-    return true;
+    // 增补平面码位（U+10000..U+10FFFF，17-21 位）超出 keycode 位域的
+    // 16 位表达范围（32 位打包契约见 include/KeyEvent.h）：合成完整码位
+    // 再写入必然截断成 BMP 内的失真假值，return true 还会让调用方误信
+    // 翻译成功、掩盖失真。按未知键处理（return false，键放行给宿主）是
+    // 16 位契约下唯一不失真的行为；支持增补码位需扩展传输宽度，属协议
+    // 演进项（weasel_CODE_REVIEW_20261103.md D2 方案 B），不在本修复范围
+    result.keycode = 0;
+    return false;
   }
 
   result.keycode = 0;
