@@ -1,8 +1,6 @@
 #pragma once
 
-namespace weasel {
-class Deserializr;
-}
+#include "Deserializer.h"
 
 class Styler : public weasel::Deserializer {
  public:
