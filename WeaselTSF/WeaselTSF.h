@@ -138,6 +138,8 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   void _SetComposition(com_ptr<ITfComposition> pComposition);
   void _SetCompositionPosition(const RECT& rc);
   BOOL _UpdateCompositionWindow(com_ptr<ITfContext> pContext);
+  // Publish UI data after the composition position has been updated.
+  void _FlushPendingUI();
   void _FinalizeComposition();
   void _AbortComposition(bool clear = true);
 
@@ -315,4 +317,12 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   TfGuidAtom _gaDisplayAttributeInput = 0;
   BOOL _committed = false;
   BOOL _isToOpenClose = false;
+
+  /* pending-UI（cecb9e8 移植）：composing 帧只暂存 context/status，等
+   * 异步 extent 会话里 _SetCompositionPosition 更新位置后由
+   * _FlushPendingUI() 发布，避免候选窗按旧 caret 位置闪一帧。发布时序
+   * 与 D3 的会话状态捕获（构造时 std::move 快照）正交 */
+  std::shared_ptr<weasel::Context> _pendingUIContext;
+  weasel::Status _pendingUIStatus;
+  bool _hasPendingUI = false;
 };
