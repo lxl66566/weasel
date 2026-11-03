@@ -75,6 +75,8 @@ LangString LNKFORUNINSTALL ${LANG_TRADCHINESE} "卸載小狼毫"
 LangString CONFIRMATION ${LANG_TRADCHINESE} "安裝前，請先卸載舊版本的小狼毫。$\n$\n按下「確定」移除舊版本，按下「取消」放棄本次安裝。"
 LangString SYSTEMVERSIONNOTOK ${LANG_TRADCHINESE} "您的系统不被支持，最低系統要求:Windows 8.1!"
 LangString AUTOCHKUPDATE ${LANG_TRADCHINESE} "自動檢查版本更新？"
+LangString HKCUBACKUPFAILED ${LANG_TRADCHINESE} "無法備份使用者設定（舊版本可能沒有使用者設定），本次升級將不還原設定。"
+LangString HKCURESTOREFAILED ${LANG_TRADCHINESE} "還原使用者設定失敗，安裝即將中止，請重新執行安裝程式。"
 
 !insertmacro MUI_LANGUAGE "SimpChinese"
 LangString DISPLAYNAME ${LANG_SIMPCHINESE} "小狼毫输入法"
@@ -92,6 +94,8 @@ LangString LNKFORUNINSTALL ${LANG_SIMPCHINESE} "卸载小狼毫"
 LangString CONFIRMATION ${LANG_SIMPCHINESE} '安装前，请先卸载旧版本的小狼毫。$\n$\n点击 "确定" 移除旧版本，或点击 "取消" 放弃本次安装。'
 LangString SYSTEMVERSIONNOTOK ${LANG_SIMPCHINESE} "您的系統不被支持，最低系统要求:Windows 8.1!"
 LangString AUTOCHKUPDATE ${LANG_SIMPCHINESE} "自动检查版本更新？"
+LangString HKCUBACKUPFAILED ${LANG_SIMPCHINESE} "无法备份用户设置（旧版本可能没有用户设置），本次升级将不还原设置。"
+LangString HKCURESTOREFAILED ${LANG_SIMPCHINESE} "还原用户设置失败，安装即将中止，请重新运行安装程序。"
 
 !insertmacro MUI_LANGUAGE "English"
 LangString DISPLAYNAME ${LANG_ENGLISH} "Weasel"
@@ -109,10 +113,19 @@ LangString LNKFORUNINSTALL ${LANG_ENGLISH} "Uninstall Weasel"
 LangString CONFIRMATION ${LANG_ENGLISH} "Before installation, please uninstall the old version of Weasel.$\n$\nPress 'OK' to remove the old version, or 'Cancel' to abort installation."
 LangString SYSTEMVERSIONNOTOK ${LANG_ENGLISH} "Your system not supported, minimium system required: Windows 8.1!"
 LangString AUTOCHKUPDATE ${LANG_ENGLISH} "Automatically check for updates?"
+LangString HKCUBACKUPFAILED ${LANG_ENGLISH} "Failed to back up your per-user settings (the old installation may have none); they will not be restored by this upgrade."
+LangString HKCURESTOREFAILED ${LANG_ENGLISH} "Failed to restore your per-user settings. Installation will be aborted; please run the installer again."
 
 ;--------------------------------
 
 Function .onInit
+  ; Remove leftovers of a previous upgrade that was cancelled or failed after
+  ; the backups below were made, so they never linger in %TEMP% forever:
+  ;   weasel-hkcu-backup.reg (per-user settings backup)
+  ;   weasel-backup\ (previous data directory backup)
+  Delete "$TEMP\weasel-hkcu-backup.reg"
+  RMDir /r "$TEMP\weasel-backup"
+
   ; if not version >= 8.1, quit and MessageBox(if not silent)
   ${IfNot} ${AtLeastWin8.1}
     IfSilent toquit
@@ -155,8 +168,27 @@ uninst:
   ; Backup per-user config (HKCU Software\Rime\Weasel: Profile/Hant/RimeUserDir/
   ; Language/Updates) before the old uninstaller clears it, so the upgrade can
   ; restore it below and the new WeaselSetup /i keeps running silent.
+  ; NOTE (mixed elevation limitation): when a standard user launches this
+  ; installer with another administrator's credentials, HKCU in this elevated
+  ; context resolves to the ADMINISTRATOR's hive, so the reg export/import
+  ; below (as well as the CheckForUpdates preference written in the section)
+  ; apply to the administrator's profile, not the standard user's. The standard
+  ; user's own settings are never cleared by the old uninstaller and thus
+  ; survive the upgrade untouched, but the administrator's hive ends up with a
+  ; default per-user configuration. WeaselSetup's per-user redirection
+  ; (/origsid) is not used here because reg.exe is invoked directly.
   ; Export fails harmlessly when the key does not exist.
+  StrCpy $R4 0
   ExecWait 'reg export HKCU\Software\Rime\Weasel "$TEMP\weasel-hkcu-backup.reg" /y'
+  Pop $R2
+  ${If} $R2 != 0
+    ; no valid backup: discard any partial file and skip the restore below
+    Delete "$TEMP\weasel-hkcu-backup.reg"
+    StrCpy $R4 1
+    IfSilent backup_failed_done
+    MessageBox MB_OK|MB_ICONINFORMATION '$(HKCUBACKUPFAILED)'
+backup_failed_done:
+  ${EndIf}
 
   ; Backup data directory from previous installation, user files may exist
   ReadRegStr $R1 HKLM SOFTWARE\Rime\Weasel "WeaselRoot"
@@ -198,9 +230,17 @@ call_uninstaller:
 
   ; Restore the per-user config backed up above: with Profile present, the new
   ; WeaselSetup /i stays silent (no options dialog, no completion message box)
-  IfFileExists "$TEMP\weasel-hkcu-backup.reg" 0 +3
+  ; $R4 = 1 means the export above failed, so there is nothing valid to import
+  StrCmp $R4 1 restore_skipped
+  IfFileExists "$TEMP\weasel-hkcu-backup.reg" 0 restore_skipped
   ExecWait 'reg import "$TEMP\weasel-hkcu-backup.reg"'
+  Pop $R2
   Delete "$TEMP\weasel-hkcu-backup.reg"
+  ${If} $R2 != 0
+    MessageBox MB_OK|MB_ICONSTOP '$(HKCURESTOREFAILED)'
+    Abort
+  ${EndIf}
+restore_skipped:
 
 done:
 FunctionEnd
