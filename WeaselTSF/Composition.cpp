@@ -450,12 +450,25 @@ void WeaselTSF::_UpdateComposition(com_ptr<ITfContext> pContext) {
   // 下面的会话只应用已解析的结果，异步排队不影响数据完整性
   _ConsumeResponseIfFresh();
 
-  HRESULT hr;
-
+  // 记录最近上下文：UI 回调、_AbortComposition 等无自带上下文的路径
+  // 复用（应用会话的目标上下文已改由会话对象在构造时捕获，见下）
   _pEditSessionContext = pContext;
 
-  _pEditSessionContext->RequestEditSession(
-      _tfClientId, this, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE, &hr);
+  // D3：commit 与目标上下文在构造时捕获进会话对象。TF_ES_ASYNCDONTCARE
+  // 会话可能被宿主延迟（如 Word 持文档锁），若执行时才读共享成员，延迟
+  // 窗口内新键/新文档已把 _pendingCommit/_pEditSessionContext 覆盖成新值，
+  // 被延迟的旧会话便会把旧文档的 commit 写进新文档；捕获后各会话只消费
+  // 自己的应答，同步场景（会话在本调用内即执行）行为与旧实现一致
+  std::wstring commit = std::move(_pendingCommit);
+  _pendingCommit.clear();
+  com_ptr<CUpdateCompositionEditSession> pEditSession;
+  pEditSession.Attach(
+      new CUpdateCompositionEditSession(this, pContext, std::move(commit)));
+  if (pEditSession != nullptr) {
+    HRESULT hr;
+    pContext->RequestEditSession(_tfClientId, pEditSession,
+                                 TF_ES_ASYNCDONTCARE | TF_ES_READWRITE, &hr);
+  }
 }
 
 /* Composition State */

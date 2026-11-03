@@ -52,8 +52,6 @@ STDMETHODIMP WeaselTSF::QueryInterface(REFIID riid, void** ppvObject) {
     *ppvObject = (ITfKeyEventSink*)this;
   else if (IsEqualIID(riid, IID_ITfCompositionSink))
     *ppvObject = (ITfCompositionSink*)this;
-  else if (IsEqualIID(riid, IID_ITfEditSession))
-    *ppvObject = (ITfEditSession*)this;
   else if (IsEqualIID(riid, IID_ITfThreadFocusSink))
     *ppvObject = (ITfThreadFocusSink*)this;
   else if (IsEqualIID(riid, IID_ITfDisplayAttributeProvider))

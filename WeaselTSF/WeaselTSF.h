@@ -17,7 +17,6 @@ class WeaselTSF : public ITfTextInputProcessorEx,
                   public ITfCompositionSink,
                   public ITfThreadFocusSink,
                   public ITfActiveLanguageProfileNotifySink,
-                  public ITfEditSession,
                   public ITfDisplayAttributeProvider {
  public:
   WeaselTSF();
@@ -85,9 +84,6 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   STDMETHODIMP OnCompositionTerminated(TfEditCookie ecWrite,
                                        ITfComposition* pComposition);
 
-  /* ITfEditSession */
-  STDMETHODIMP DoEditSession(TfEditCookie ec);
-
   /* ITfActiveLanguageProfileNotifySink */
   STDMETHODIMP OnActivated(REFCLSID clsid,
                            REFGUID guidProfile,
@@ -131,6 +127,14 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   void _ConsumeResponseIfFresh();
   BOOL _IsComposing();
   BOOL _IsCurrentComposition(ITfComposition* pComposition);
+  // D3：把已解析的服务器应答应用到文档。由 CUpdateCompositionEditSession
+  // （见 EditSession.h）在会话执行时回交构造时捕获的 commit 与目标
+  // 上下文；会话不再读 _pendingCommit/_pEditSessionContext 成员快照，
+  // 被宿主延迟的 TF_ES_ASYNCDONTCARE 会话不会拿到延迟窗口内新键/新文档
+  // 覆盖后的值
+  STDMETHODIMP _ApplyCompositionUpdate(TfEditCookie ec,
+                                       com_ptr<ITfContext> pContext,
+                                       std::wstring commit);
   void _SetComposition(com_ptr<ITfComposition> pComposition);
   void _SetCompositionPosition(const RECT& rc);
   BOOL _UpdateCompositionWindow(com_ptr<ITfContext> pContext);
@@ -247,6 +251,11 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   BOOL _prevfEaten = FALSE;
   int _keyCountToSimulate = 0;
 
+  // 最近一次键事件/组合更新请求的目标上下文。D3 后不再充当编辑会话的
+  // 快照（应用会话 CUpdateCompositionEditSession 自带上下文与 commit），
+  // 仅供无自带上下文的路径复用：UI 回调（候选选择/翻页/悬停）的
+  // _UpdateComposition 调用、_AbortComposition 的组合收尾、
+  // _RequestKeyboardOpenDeferred 的兜底
   com_ptr<ITfContext> _pEditSessionContext;
 
   com_ptr<CCompartmentEventSink> _pKeyboardCompartmentSink;
@@ -287,7 +296,10 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   bool _conversionFlagsValid = false;
 
   /* 已解析、待编辑会话应用的服务器应答；解析发生在按键/UI 回调线程内
-   * （应答缓冲在下一次 Transact 前有效），会话可能异步排队、晚于解析 */
+   * （应答缓冲在下一次 Transact 前有效），会话可能异步排队、晚于解析。
+   * D3：_UpdateComposition 构造会话对象时即 std::move 整体取走，本成员
+   * 只是解析线程到会话构造之间的暂存；被延迟的会话拿到的永远是构造
+   * 时的快照，延迟窗口内的新键不会再串写入旧会话 */
   std::wstring _pendingCommit;  // commit 是事件流：应用前按序累积
   std::shared_ptr<weasel::Context> _context =
       std::make_shared<weasel::Context>();
