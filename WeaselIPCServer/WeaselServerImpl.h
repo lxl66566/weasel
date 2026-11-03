@@ -101,6 +101,10 @@ class ServerImpl : public CWindowImpl<ServerImpl, CWindow, ServerWinTraits>
   void _Finailize();
   /* Interrupt and join the pipe listener and its workers; idempotent */
   void _StopPipeServer();
+  /* Toggle ascii_mode for the session `sessionId`; NOT self-locking:
+   * every caller must already hold g_api_mutex, so each OnCommand path
+   * takes the lock exactly once, at its own boundary (D1). */
+  void _OnAsciiModeToggle(UINT uID, DWORD sessionId);
   template <typename _Resp>
   void HandlePipeMessage(PipeMessage pipe_msg, _Resp resp);
 

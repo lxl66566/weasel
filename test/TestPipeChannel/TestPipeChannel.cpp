@@ -769,6 +769,68 @@ static void test_thread_exit_closes_pipe_handle() {
   delete server;
 }
 
+/* D9: a truncated command frame - fewer bytes than sizeof(PipeMessage)
+ * written as one message - reads short but successfully in message mode;
+ * the connection must be dropped via the existing error path instead of
+ * dispatching the frame's garbage fields. */
+static void test_truncated_frame_drops_connection() {
+  std::wstring name = unique_pipe_name(L"d9");
+  ExposedServer* server = new ExposedServer(std::wstring(name));
+  std::atomic<int> handled{0};
+  auto handler = [&handled](weasel::PipeMessage msg,
+                            weasel::PipeServer::Respond resp) {
+    ++handled;
+    resp(msg.wParam + 1);
+  };
+  boost::thread listener([server, &handler] { server->Listen(handler); });
+
+  // raw client that connects and writes a truncated frame as one message
+  HANDLE c = INVALID_HANDLE_VALUE;
+  bool written = false;
+  for (int waited = 0; waited < 2000 && !written; waited += 25) {
+    if (c == INVALID_HANDLE_VALUE) {
+      c = ::CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                        OPEN_EXISTING, 0, NULL);
+      if (c == INVALID_HANDLE_VALUE) {
+        Sleep(25);
+        continue;
+      }
+    }
+    // the listener may not have accepted yet; retry until the write lands
+    weasel::PipeMessage req{WEASEL_IPC_ECHO, 41, 0};
+    DWORD written_bytes = 0;
+    written = ::WriteFile(c, &req, sizeof(req) - 4, &written_bytes, NULL) &&
+              written_bytes == sizeof(req) - 4;
+    if (!written)
+      Sleep(25);
+  }
+  check(written, "D9: truncated frame written");
+
+  // the worker unregisters itself as it drops the connection
+  check(wait_until([&] { return server->ExposedWorkerCount() == 0; }, 5000),
+        "D9: short frame dropped the connection");
+  check(handled.load() == 0, "D9: truncated frame never dispatched");
+
+  // the server keeps serving well-formed clients afterwards
+  ClientChannel client{std::wstring(name)};
+  check(connect_with_retry(client), "D9: server accepts new client");
+  weasel::PipeMessage r{WEASEL_IPC_ECHO, 41, 0};
+  bool served = false;
+  try {
+    served = (client.Transact(r) == 42);
+  } catch (...) {
+  }
+  check(served, "D9: well-formed client served after the drop");
+
+  listener.interrupt();
+  server->WakeListener();
+  check(listener.timed_join(boost::posix_time::seconds(5)),
+        "D9: listener exits");
+  boost::thread drainer([server] { server->DrainWorkers(); });
+  check(drainer.timed_join(boost::posix_time::seconds(5)), "D9: drain");
+  delete server;
+}
+
 int main() {
   test_roundtrip();
   test_pipe_connected_race();
@@ -783,6 +845,7 @@ int main() {
   test_oversized_body_fails_loudly();
   test_failed_transact_leaves_no_staged_body();
   test_thread_exit_closes_pipe_handle();
+  test_truncated_frame_drops_connection();
   std::cout << (g_failures ? "FAILED: " : "PASSED: ") << g_failures
             << " failure(s)" << std::endl;
   // The listener threads are still blocked in ConnectNamedPipe on purpose;

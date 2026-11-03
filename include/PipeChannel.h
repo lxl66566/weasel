@@ -68,6 +68,35 @@ class PipeChannelBase {
   HANDLE _TryConnect();
   size_t _WritePipe(HANDLE p, size_t s, char* b);
   void _Receive(HANDLE pipe, LPVOID msg, size_t rec_len);
+  /* Message-mode receive of one fixed-size frame into msg, returning the
+   * byte count ReadFile actually delivered. Same contract as _Receive
+   * (a frame longer than rec_len stages its trailing body into the
+   * shared receive buffer via the ERROR_MORE_DATA path), plus the count
+   * so callers can reject short frames: in PIPE_READMODE_MESSAGE a short
+   * successful read means the peer wrote a truncated message in one
+   * write - a broken or hostile peer, never a legitimate exchange. */
+  DWORD _ReceiveFrame(HANDLE pipe, LPVOID msg, size_t rec_len) {
+    DWORD lread;
+    BOOL success = ::ReadFile(pipe, msg, rec_len, &lread, NULL);
+    if (success) {
+      _GetContext()->has_body = false;
+      return lread;
+    }
+    DWORD err = ::GetLastError();
+    if (err != ERROR_MORE_DATA)
+      throw err;
+    // The frame is longer than rec_len: its header now fills msg and
+    // the trailing body is still pending. Stage the body into the
+    // shared receive buffer, exactly as _Receive does.
+    auto ctx = _GetContext();
+    memset(ctx->buffer.get(), 0, buff_size);
+    success = ::ReadFile(pipe, ctx->buffer.get(), buff_size, &lread, NULL);
+    if (!success)
+      throw ::GetLastError();
+    ctx->resp_serial++;  // a fresh response body now occupies the buffer
+    ctx->has_body = false;
+    return static_cast<DWORD>(rec_len);  // the header was delivered whole
+  }
   /* Try to get a connection from client */
   HANDLE _ConnectServerPipe(std::wstring& pn);
   /* Create a new server-side pipe instance */
@@ -233,8 +262,13 @@ class PipeChannel : public PipeChannelBase {
   }
 
   _TyRes _ReceiveResponse() {
-    _TyRes result;
-    _Receive(_GetPipeHandle()->handle, &result, sizeof(result));
+    _TyRes result{};  // value-init: a truncated reply is never data
+    // A short frame can only come from a broken peer: never surface a
+    // partially-written response as valid data (D9, symmetric to the
+    // server-side check in PipeServer::_ProcessPipeThread).
+    if (_ReceiveFrame(_GetPipeHandle()->handle, &result, sizeof(result)) !=
+        sizeof(result))
+      throw (DWORD)ERROR_MORE_DATA;
     return result;
   }
 

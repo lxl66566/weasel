@@ -105,6 +105,28 @@ LRESULT ServerImpl::OnEndSystemSession(UINT uMsg,
   return 0;
 }
 
+/* Toggle ascii_mode on the given session. The api lock must be held by
+ * the caller (both OnCommand paths lock at their own boundary, D1).
+ *
+ * lParam semantics differ between the two OnCommand paths (V8): the
+ * pipe path (3-param OnCommand, from ClientImpl::TrayCommand) carries
+ * the client's session id - 0 is legal there and means "no typing
+ * session", e.g. WeaselServer.exe /ascii toggling every session (see
+ * RimeWithWeaselHandler::SetOption); the WM_COMMAND path (4-param
+ * OnCommand, from TrackPopupMenu) carries the originating HMENU
+ * instead. The tray menu has no ascii item today, but if one is ever
+ * added, the HMENU value would land here as a bogus session id - so a
+ * nonzero sessionId must name a live session before it reaches
+ * SetOption. */
+void ServerImpl::_OnAsciiModeToggle(UINT uID, DWORD sessionId) {
+  if (!m_pRequestHandler)
+    return;
+  if (sessionId != 0 && !m_pRequestHandler->FindSession(sessionId))
+    return;  // not a live session: drop instead of feeding it to rime
+  m_pRequestHandler->SetOption(sessionId, "ascii_mode",
+                               uID == ID_WEASELTRAY_ENABLE_ASCII);
+}
+
 LRESULT ServerImpl::OnCommand(UINT uMsg,
                               WPARAM wParam,
                               LPARAM lParam,
@@ -112,17 +134,14 @@ LRESULT ServerImpl::OnCommand(UINT uMsg,
   UINT uID = LOWORD(wParam);
   switch (uID) {
     case ID_WEASELTRAY_ENABLE_ASCII:
-      if (m_pRequestHandler) {
-        std::lock_guard guard(g_api_mutex);
-        m_pRequestHandler->SetOption(lParam, "ascii_mode", true);
-      }
+    case ID_WEASELTRAY_DISABLE_ASCII: {
+      // WM_COMMAND path (TrackPopupMenu): runs on the server message
+      // thread with no api lock held, so take it here - exactly once per
+      // path, never nested (D1).
+      std::lock_guard guard(g_api_mutex);
+      _OnAsciiModeToggle(uID, lParam);
       return 0;
-    case ID_WEASELTRAY_DISABLE_ASCII:
-      if (m_pRequestHandler) {
-        std::lock_guard guard(g_api_mutex);
-        m_pRequestHandler->SetOption(lParam, "ascii_mode", false);
-      }
-      return 0;
+    }
     default:;
   }
 
@@ -151,9 +170,30 @@ LRESULT ServerImpl::OnServiceNotifyMessage(UINT uMsg,
 DWORD ServerImpl::OnCommand(WEASEL_IPC_COMMAND uMsg,
                             DWORD wParam,
                             DWORD lParam) {
-  BOOL handled = TRUE;
-  OnCommand(uMsg, wParam, lParam, handled);
-  return handled;
+  // Pipe TRAY_COMMAND path: the listener dispatches this message
+  // WITHOUT holding g_api_mutex (see Run()), so the ascii branch takes
+  // the lock itself - exactly once per path, never nested (D1). lParam
+  // is the client's session id here, not an HMENU.
+  UINT uID = LOWORD(wParam);
+  switch (uID) {
+    case ID_WEASELTRAY_ENABLE_ASCII:
+    case ID_WEASELTRAY_DISABLE_ASCII: {
+      std::lock_guard guard(g_api_mutex);
+      _OnAsciiModeToggle(uID, lParam);
+      return TRUE;
+    }
+    default:;
+  }
+
+  // Registered menu commands run lock-free: m_MenuHandlers is written
+  // only before Start() and read-only at runtime, and a handler may
+  // block for seconds inside ShellExecuteW (/deploy, /wiki, ...) - it
+  // must never stall every keystroke behind the global api lock (D4).
+  std::map<UINT, CommandHandler>::iterator it = m_MenuHandlers.find(uID);
+  if (it == m_MenuHandlers.end())
+    return FALSE;
+  it->second();  // execute command
+  return TRUE;
 }
 
 HWND ServerImpl::Start() {
@@ -190,7 +230,14 @@ int ServerImpl::Run() {
     // Defer the response write until the api lock is released: a slow or
     // hung client must not extend the global critical section.
     PipeServer::Msg result = 0;
-    {
+    if (msg.Msg == WEASEL_IPC_TRAY_COMMAND) {
+      // Tray commands dispatch OUTSIDE the api lock: their menu handlers
+      // may block for seconds inside ShellExecuteW and must never stall
+      // every keystroke behind it (D4); the ascii branch takes the lock
+      // itself inside OnCommand (D1). Every other message touches
+      // RequestHandler state and keeps the lock.
+      HandlePipeMessage(msg, [&result](PipeServer::Msg r) { result = r; });
+    } else {
       std::lock_guard guard(g_api_mutex);
       HandlePipeMessage(msg, [&result](PipeServer::Msg r) { result = r; });
     }
@@ -521,8 +568,14 @@ PipeServer::ServerRunner PipeServer::GetServerRunner(
 void PipeServer::_ProcessPipeThread(HANDLE pipe, ServerHandler const& handler) {
   try {
     for (;;) {
-      Res msg;
-      _Receive(pipe, &msg, sizeof(msg));
+      Res msg{};  // value-init: a truncated frame carries no stack garbage
+      // Message mode: a short successful read means the client wrote a
+      // truncated command frame - a well-formed frame is exactly one
+      // message of sizeof(msg) bytes. Drop the connection via the
+      // existing error path (unregister + close) instead of letting the
+      // frame's garbage fields reach the dispatcher (D9).
+      if (_ReceiveFrame(pipe, &msg, sizeof(msg)) != sizeof(msg))
+        throw (DWORD)ERROR_MORE_DATA;
       handler(msg, [this, pipe](Msg resp) { _Send(pipe, resp); });
     }
   } catch (...) {
