@@ -15,15 +15,11 @@
 // taskbar UI thread inside Shell_NotifyIcon.
 struct WeaselTrayIconState {
   WeaselTrayIconState()
-      : valid(false),
-        display_tray_icon(false),
-        disabled(false),
-        ascii_mode(false) {}
+      : display_tray_icon(false), disabled(false), ascii_mode(false) {}
 
   static WeaselTrayIconState From(const weasel::UIStyle& style,
                                   const weasel::Status& status) {
     WeaselTrayIconState state;
-    state.valid = true;
     state.display_tray_icon = style.display_tray_icon;
     state.disabled = status.disabled;
     state.ascii_mode = status.ascii_mode;
@@ -33,7 +29,7 @@ struct WeaselTrayIconState {
   }
 
   bool operator==(const WeaselTrayIconState& rhs) const {
-    return valid == rhs.valid && display_tray_icon == rhs.display_tray_icon &&
+    return display_tray_icon == rhs.display_tray_icon &&
            disabled == rhs.disabled && ascii_mode == rhs.ascii_mode &&
            current_zhung_icon == rhs.current_zhung_icon &&
            current_ascii_icon == rhs.current_ascii_icon;
@@ -43,7 +39,6 @@ struct WeaselTrayIconState {
     return !(*this == rhs);
   }
 
-  bool valid;
   bool display_tray_icon;
   bool disabled;
   bool ascii_mode;
