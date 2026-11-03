@@ -2,6 +2,8 @@
 #include "SecurityAttribute.h"
 #include <Sddl.h>
 
+#include <cstdlib>
+
 #ifndef SDDL_ALL_APP_PACKAGES
 #define SDDL_ALL_APP_PACKAGES TEXT("AC")
 #endif
@@ -62,14 +64,25 @@ void SecurityAttribute::_Init() {
   // Privileges for UWP and IE protected mode
   // https://stackoverflow.com/questions/39138674/accessing-named-pipe-servers-from-within-ie-epm-bho
 
-  ConvertStringSecurityDescriptorToSecurityDescriptor(
-      LOW_INTEGRITY_SDDL_SACL SDDL_DACL SDDL_DELIMINATOR
-          LOCAL_SYSTEM_FILE_ACCESS EVERYONE_FILE_ACCESS
-              ALL_APP_PACKAGES_FILE_ACCESS,
-      SDDL_REVISION_1, &pd, NULL);
+  // Fail fast instead of silently falling back to the process-default
+  // security descriptor: the low-integrity/UWP grants in this SDDL are
+  // load-bearing, and an unchecked failure would leave clients (UWP, IE
+  // EPM) rejected by the default DACL with no clue why. There is no logging
+  // facility linked into WeaselIPCServer, and WeaselServer.exe is
+  // WER-registered for mini dumps (WeaselSetup/imesetup.cpp), so abort() is
+  // both the fail-fast and the diagnosable choice here.
+  if (!ConvertStringSecurityDescriptorToSecurityDescriptor(
+          LOW_INTEGRITY_SDDL_SACL SDDL_DACL SDDL_DELIMINATOR
+              LOCAL_SYSTEM_FILE_ACCESS EVERYONE_FILE_ACCESS
+                  ALL_APP_PACKAGES_FILE_ACCESS,
+          SDDL_REVISION_1, &pd, NULL)) {
+    abort();
+  }
   sa.nLength = sizeof(SECURITY_ATTRIBUTES);
   sa.lpSecurityDescriptor = pd;
-  sa.bInheritHandle = TRUE;
+  // The security descriptor guards a named pipe; handles are never inherited
+  // through it, so bInheritHandle is meaningless and kept FALSE.
+  sa.bInheritHandle = FALSE;
 }
 
 SECURITY_ATTRIBUTES* SecurityAttribute::get_attr() {
