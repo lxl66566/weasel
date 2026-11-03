@@ -17,8 +17,11 @@ inline bool ends_with(const std::wstring& wstr, const std::wstring& wsub)
 inline bool ireplace_last(std::wstring& input, const std::wstring& search, const std::wstring& sub)
 {
 	std::size_t pos = input.rfind(search);
-	if (pos != std::wstring::npos)
+	if (pos != std::wstring::npos) {
 		input.replace(pos, search.length(), sub);
+		return true;
+	}
+	return false;
 }
 
 inline std::string join(const std::set<std::string>& list, const std::string& delim)
