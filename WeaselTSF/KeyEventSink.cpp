@@ -70,6 +70,19 @@ STDMETHODIMP WeaselTSF::OnSetFocus(BOOL fForeground) {
   else {
     m_client.FocusOut();
     _AbortComposition();
+    // V1：Caps Lock 模拟的配对状态跨窗口失效。合成态下在 A 窗口按下
+    // Caps（被吃）后焦点切走，_AbortComposition 已置 _committed = TRUE，
+    // 若保留配对（前一键为被吃的 Caps 按下），在 B 窗口的释放会误判
+    // 满足模拟条件，把合成的双事件注入 B 窗口。按下/释放的配对只在同
+    // 窗口的连续序列内有意义，随焦点一并作废。
+    // _keyCountToSimulate 是注入事件的吞噬护栏，FALSE 到来时前台已易
+    // 主，SendInput 的在途模拟键会随焦点投递到新前台线程、由那边自己的
+    // 键事件 sink 按真实键处理；本地残留的计数只会让焦点切回后的普通键
+    // 因“计数非零期间不转发服务器”而漏送（对非 Caps 键计数永不递减，
+    // 相当于输入法失效），一并清零
+    _prevKeyEvent = weasel::KeyEvent();
+    _prevfEaten = FALSE;
+    _keyCountToSimulate = 0;
   }
 
   return S_OK;
