@@ -149,9 +149,23 @@ try {
     if ($url_pat -and $url_replace) {
       $original_7z_url = $original_7z_url -replace $url_pat, $url_replace;
     }
+    # SHA-256 of 7zr.exe 24.08 from the official ip7z/7zip GitHub release,
+    # pinned so the downloaded tool is verified before it is put on PATH and
+    # executed. A mirror configured via url_pat/url_replace must serve the
+    # identical file, otherwise the verification fails.
+    $7zr_sha256 = "1b16c41ae39b679384b06f1492b587b650716430ff9c2e079dca2ad1f62c952d";
     try {
       Write-Host "We will download 7z console tool from: $original_7z_url";
       Invoke-WebRequest -Uri $original_7z_url -OutFile ".\7z.exe";
+      # verify the download before executing it
+      $downloaded_7zr_hash = (Get-FileHash -Path ".\7z.exe" -Algorithm SHA256).Hash
+      if ($downloaded_7zr_hash -ne $7zr_sha256) {
+        Write-Host "❌ Error: SHA-256 mismatch for downloaded 7zr.exe";
+        Write-Host "   expected: $7zr_sha256";
+        Write-Host "   got:       $downloaded_7zr_hash";
+        Remove-Item ".\7z.exe" -ErrorAction SilentlyContinue
+        SafeExit
+      }
       $env:Path += ";$PWD";
       $cmdOk = $true
     } catch{
@@ -246,6 +260,19 @@ if ($null -ne $response.assets -and $response.assets.Count -gt 0) {
         }
         try {
           Invoke-WebRequest @downloadParams
+          # verify the download against the sha256 digest published for this
+          # asset by the release api; skip when no digest is available (e.g.
+          # with a mirrored api_pat) so mirror setups keep working
+          if ($_.digest -match "^sha256:(.+)$") {
+            $downloaded_hash = (Get-FileHash -Path $fileName -Algorithm SHA256).Hash
+            if ($downloaded_hash -ne $matches[1]) {
+              Write-Host "❌ Error: SHA-256 mismatch for ${fileName}: expected $($matches[1]), got $downloaded_hash"
+              Remove-Item $fileName -ErrorAction SilentlyContinue
+              return
+            }
+          } else {
+            Write-Host "❗ ${fileName}: no sha256 digest available, skipped verification"
+          }
           Write-Host "☑  Downloaded $fileName to the current directory."
           return $fileName
         } catch {
@@ -277,8 +304,23 @@ if ($null -ne $response.assets -and $response.assets.Count -gt 0) {
           }
           try {
             Invoke-WebRequest @downloadParams
-            Write-Host "☑  Downloaded $fileName to the current directory."
-            $fileNames += $fileName
+            # verify the download against the sha256 digest published for this
+            # asset by the release api; skip when no digest is available (e.g.
+            # with a mirrored api_pat) so mirror setups keep working
+            if ($_.digest -match "^sha256:(.+)$") {
+              $downloaded_hash = (Get-FileHash -Path $fileName -Algorithm SHA256).Hash
+              if ($downloaded_hash -ne $matches[1]) {
+                Write-Host "❌ Error: SHA-256 mismatch for ${fileName}: expected $($matches[1]), got $downloaded_hash"
+                Remove-Item $fileName -ErrorAction SilentlyContinue
+              } else {
+                Write-Host "☑  Downloaded $fileName to the current directory."
+                $fileNames += $fileName
+              }
+            } else {
+              Write-Host "❗ ${fileName}: no sha256 digest available, skipped verification"
+              Write-Host "☑  Downloaded $fileName to the current directory."
+              $fileNames += $fileName
+            }
           } catch {
             Write-Host "❌ Error downloading ${fileName}: $($_.Exception.Message)"
           }

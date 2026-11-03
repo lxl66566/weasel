@@ -98,9 +98,12 @@ function update_changelog {
   }
 
   $contentAdd += $changelog;
-  Write-Host "`n" + $contentAdd + "`n"
+  Write-Host ("`n" + $contentAdd + "`n")
   $fileContent = $contentAdd + "`n" + $fileContent;
-  $fileContent | Out-File -FilePath "CHANGELOG.md" -NoNewline -Encoding UTF8;
+  # write UTF-8 without BOM: Out-File -Encoding UTF8 emits a BOM under
+  # Windows PowerShell 5.1, inconsistent with the no-BOM policy of replace_str
+  [System.IO.File]::WriteAllText("$PWD\CHANGELOG.md", $fileContent,
+    [System.Text.UTF8Encoding]::new($false))
 }
 # replace string with regex pat
 function replace_str {
@@ -181,7 +184,18 @@ if ($basetag -notmatch "^\d+\.\d+\.\d+$") {
 if ($tag -eq $old_version["str"]) {
   Write-Host "the new tag: $tag is the same with the old one:" $old_version["str"];
   exit 1;
-} elseif ($tag -lt $old_version["str"]) {
+}
+# compare as versions, not as strings: lexicographic comparison of strings
+# would wrongly reject legit upgrades like 0.9.0 -> 0.10.0
+# ("0.10.0" -lt "0.9.0" is true)
+try {
+  $tag_version = [version]$tag
+  $old_tag_version = [version]$old_version["str"]
+} catch {
+  Write-Host "version format error, please recheck them: new tag '$tag', old version '$($old_version["str"])'";
+  exit 1;
+}
+if ($tag_version -lt $old_tag_version) {
   Write-Host "$tag is older version than " $old_version['str']", please recheck your target version.";
   exit 1;
 }

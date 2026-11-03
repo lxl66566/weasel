@@ -213,6 +213,9 @@ goto end
     goto end
   )
 
+  rem build directory does not exist: nothing to clean, treat as success
+  goto end
+
 :error
   echo error building weasel...
   exit /b 1
