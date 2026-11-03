@@ -1,6 +1,40 @@
 #include "stdafx.h"
 #include "WeaselServerApp.h"
 #include <filesystem>
+#include <winsparkle.h>
+
+// WinSparkle contract (include/winsparkle.h, "Configuration functions"):
+// win_sparkle_set_appcast_url() may only be called before the first
+// win_sparkle_init(), from the main thread. So the feed URL is determined
+// exactly once, ahead of init: at the top of Run(), or on the first
+// check_update() call from the /update command line (which reaches
+// check_update() before Run() calls win_sparkle_init()). After startup the
+// one-shot guard makes check_update() a pure
+// win_sparkle_check_update_with_ui() call, never a setup call.
+static bool s_update_feed_configured = false;
+
+static void SetupUpdateFeed() {
+  if (s_update_feed_configured)
+    return;
+  s_update_feed_configured = true;
+  // when checked manually, show testing versions too
+  std::string feed_url = GetCustomResource("ManualUpdateFeedURL", "APPCAST");
+  std::wstring channel{};
+  auto ret = RegGetStringValue(HKEY_CURRENT_USER, L"Software\\Rime\\Weasel",
+                               L"UpdateChannel", channel);
+  if (!ret && channel == L"testing") {
+    feed_url = GetCustomResource("TestingManualUpdateFeedURL", "APPCAST");
+  }
+  if (!feed_url.empty()) {
+    win_sparkle_set_appcast_url(feed_url.c_str());
+  }
+}
+
+bool WeaselServerApp::check_update() {
+  SetupUpdateFeed();
+  win_sparkle_check_update_with_ui();
+  return true;
+}
 
 WeaselServerApp::WeaselServerApp()
     : m_handler(std::make_unique<RimeWithWeaselHandler>(&m_ui)),
@@ -13,6 +47,10 @@ WeaselServerApp::WeaselServerApp()
 WeaselServerApp::~WeaselServerApp() {}
 
 int WeaselServerApp::Run() {
+  // Configure the appcast URL before Start() lets any pipe worker dispatch
+  // WEASEL_IPC_TRAY_COMMAND, and before win_sparkle_init() below.
+  SetupUpdateFeed();
+
   if (!m_server.Start())
     return -1;
 
