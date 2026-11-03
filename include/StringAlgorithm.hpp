@@ -1,6 +1,5 @@
 #pragma once
 #include <algorithm>
-#include <clocale>
 #include <cwctype>
 #include <numeric>
 #include <set>
@@ -15,15 +14,7 @@ inline bool ends_with(const std::wstring& wstr, const std::wstring& wsub)
 		return std::equal(wsub.rbegin(), wsub.rend(), wstr.rbegin());
 }
 
-inline bool iequals(const std::wstring& str1, const std::wstring& str2)
-{
-	return std::equal(str1.begin(), str1.end(), str2.begin(), [](const wchar_t& wc1, const wchar_t& wc2)
-	{
-		return std::towlower(wc1) == std::towlower(wc2);
-	});
-}
-
-inline void ireplace_last(std::wstring& input, const std::wstring& search, const std::wstring& sub)
+inline bool ireplace_last(std::wstring& input, const std::wstring& search, const std::wstring& sub)
 {
 	std::size_t pos = input.rfind(search);
 	if (pos != std::wstring::npos)
@@ -62,6 +53,10 @@ inline bool starts_with(const std::wstring& wstr, const std::wstring& wsub)
 
 inline void to_lower(std::wstring& wstr)
 {
-	std::setlocale(LC_ALL, "");
+	// Deliberately no std::setlocale(LC_ALL, "") here: this header is also
+	// compiled into WeaselTSF, an in-process COM server, and switching the
+	// locale would mutate the *host* process globally (and is not thread-safe
+	// under MSVC). The strings folded here are pure ASCII (file paths, exe
+	// names), which std::towlower maps identically in the default "C" locale.
 	std::transform(wstr.begin(), wstr.end(), wstr.begin(), std::towlower);
 }
