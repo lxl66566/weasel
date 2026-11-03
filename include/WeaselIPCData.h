@@ -76,7 +76,7 @@ struct CandidateInfo {
     labels.clear();
   }
   bool empty() const { return candies.empty(); }
-  bool operator==(const CandidateInfo& ci) {
+  bool operator==(const CandidateInfo& ci) const {
     if (currentPage != ci.currentPage || totalPages != ci.totalPages ||
         highlighted != ci.highlighted || is_last_page != ci.is_last_page ||
         notequal(candies, ci.candies) || notequal(comments, ci.comments) ||
@@ -84,7 +84,7 @@ struct CandidateInfo {
       return false;
     return true;
   }
-  bool operator!=(const CandidateInfo& ci) {
+  bool operator!=(const CandidateInfo& ci) const {
     if (currentPage != ci.currentPage || totalPages != ci.totalPages ||
         highlighted != ci.highlighted || is_last_page != ci.is_last_page ||
         notequal(candies, ci.candies) || notequal(comments, ci.comments) ||
@@ -121,14 +121,14 @@ struct Context {
     cinfo.clear();
   }
   bool empty() const { return preedit.empty() && aux.empty() && cinfo.empty(); }
-  bool operator==(const Context& ctx) {
+  bool operator==(const Context& ctx) const {
     if (preedit == ctx.preedit && aux == ctx.aux && cinfo == ctx.cinfo)
       return true;
     return false;
   }
-  bool operator!=(const Context& ctx) { return !(operator==(ctx)); }
+  bool operator!=(const Context& ctx) const { return !(operator==(ctx)); }
 
-  bool operator!() {
+  bool operator!() const {
     if (preedit.str.empty() && aux.str.empty() && cinfo.candies.empty() &&
         cinfo.labels.empty() && cinfo.comments.empty())
       return true;
