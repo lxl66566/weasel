@@ -1,5 +1,5 @@
 #pragma once
-#include <logging.h>
+#include <WeaselUtility.h>
 #include <string>
 #include <memory>
 #include <windows.h>

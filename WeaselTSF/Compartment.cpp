@@ -6,7 +6,7 @@
 #include <resource.h>
 #include <functional>
 #include <ios>
-#include "logging.h"
+#include <WeaselUtility.h>
 #include "ResponseParser.h"
 #include "CandidateList.h"
 #include "LanguageBar.h"

@@ -1,6 +1,6 @@
 #pragma once
 #include <ResponseParser.h>
-#include <logging.h>
+#include <WeaselUtility.h>
 #include <boost/archive/text_wiarchive.hpp>
 #include <functional>
 #include <sstream>

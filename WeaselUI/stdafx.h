@@ -20,5 +20,5 @@
 #include <string>
 #include <vector>
 
-#include <logging.h>
+#include <WeaselUtility.h>
 #define GDIPVER 0x0110
