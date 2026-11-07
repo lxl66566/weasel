@@ -192,8 +192,25 @@ STDMETHODIMP WeaselTSF::OnSetThreadFocus() {
   //   在本客户端无通知的情况下改变本会话状态，焦点切换时须重新同步
   //   _status 与语言栏图标，省掉会让图标陈旧至下一次击键。
   if (m_client.Echo()) {
+    _lastSessionEchoTick = GetTickCount64();
     m_client.ProcessKeyEvent(0);
     _ConsumeResponseIfFresh();
+  } else if (m_client.IsSessionActive()) {
+    // 管道健康（IsSessionActive 仍真）而 Echo 失败：会话已在服务端被单
+    // 方面回收——librime 侧空闲超过 kLifeSpan(300s) 的会话被任意客户端
+    // FocusOut 触发的 cleanup_stale_sessions 删除（RimeWithWeasel::
+    // FocusOut），或重新部署 StartMaintenance 清空了会话表。这种死法不
+    // 抛管道异常、不清 session_id：原先此处无恢复分支，焦点回来后按键
+    // 快速路径继续把键发给死会话，服务端对未知会话优雅返回 0，字母直通
+    // 且永不自愈（此前只有切换输入法的 Deactivate→EndSession 才清 id）。
+    // 焦点回到本线程正是重建会话的时机，别让第一个键打在死会话上。
+    // 维护期部署器仍在跑时 AddSession 自守卫返回 0（_IsDeployerRunning），
+    // 此处重连无害；Echo 因管道断裂失败时 session_id 已被 _SendMessage
+    // 的异常路径清零，走不进本分支，仍由按键路径的 _EnsureServerConnected
+    // 负责重连/拉起服务（不在焦点切换上做秒级阻塞重连）
+    _Reconnect();
+    if (m_client.IsSessionActive())
+      _lastSessionEchoTick = GetTickCount64();
   }
   return S_OK;
 }
@@ -260,11 +277,24 @@ static int count_server_process() {
   return count;
 }
 
+// 会话在健康管道上被服务端单方面回收的两种死法（空闲回收 / 重新部署清表，
+// 见 OnSetThreadFocus 的恢复分支）都不抛异常、不清 session_id，快速路径
+// 无法即时感知。按 TTL 周期复核一次 Echo，把"死会话英文直通"的无声失效
+// 窗口封顶在 TTL 内；真正断管的死亡仍由 Transact 异常立即暴露，不受 TTL
+// 影响。TTL 内每键零额外往返，TTL 到点仅一次往返（顺带刷新 librime 的
+// last_active_time，反而利于会话续命）
+static const ULONGLONG kSessionValidationIntervalMs = 30 * 1000;
+
 bool WeaselTSF::_EnsureServerConnected() {
+  ULONGLONG now = GetTickCount64();
   // Trust an established session and skip the Echo roundtrip per key: a
   // dead server breaks the pipe, the failed transact invalidates the
   // session on the client, and only then do we pay for a full reconnect.
-  if (m_client.IsSessionActive())
+  // A session can also die silently on a live pipe (reaped server-side,
+  // see kSessionValidationIntervalMs), so revalidate on a TTL instead of
+  // trusting the last handshake forever.
+  if (m_client.IsSessionActive() &&
+      now - _lastSessionEchoTick < kSessionValidationIntervalMs)
     return true;
 
   if (!m_client.Echo()) {
@@ -295,7 +325,10 @@ bool WeaselTSF::_EnsureServerConnected() {
       return false;
     }
     _reconnectRetry = 0;
+    // StartSession 刚建立的新会话即本轮验证
+    _lastSessionEchoTick = GetTickCount64();
     return true;
   }
+  _lastSessionEchoTick = now;
   return true;
 }

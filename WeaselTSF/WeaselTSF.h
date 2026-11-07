@@ -226,6 +226,11 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   // consecutive failed reconnect attempts (per instance, was a shared
   // file-static raced across threads and TIP instances)
   unsigned int _reconnectRetry = 0;
+  // 最近一次 Echo 确认会话存活（服务端 FindSession 命中并续命）的时刻。
+  // 会话可能在健康管道上被服务端单方面回收（空闲回收/重新部署清表），
+  // 不抛异常也不清 session_id，按键快速路径据此按 TTL 周期性复核
+  // （见 _EnsureServerConnected 的 kSessionValidationIntervalMs）
+  ULONGLONG _lastSessionEchoTick = 0;
 
   bool isImmersive() const {
     return (_activateFlags & TF_TMF_IMMERSIVEMODE) != 0;
